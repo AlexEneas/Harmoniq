@@ -4,15 +4,11 @@ Harmoniq — Rekordbox Harmonic Playlist Generator
 ------------------------------------------------
 Creates harmonic, BPM-aware playlists from your Rekordbox XML collection.
 
-Features:
-- Camelot-key mixing (Mixed In Key rules)
-- BPM-aware transitions + controlled fallback when no strict match exists
-- Genre filters (partial match), played/unplayed filter
-- Start BPM / BPM window
-- Recently-added filter (last N days)
-- Persistent JSON config saved next to the program (no AppData)
-- /config wizard for easy setup
-- --config <path> for custom JSON config
+Changes in this build:
+- Config file now stores ONLY the Rekordbox XML path.
+- Every run asks for selection parameters (genres, counts, BPMs, etc.).
+- If XML path is missing/invalid, prompts for it and saves it.
+- Prints a detailed track list of the final selection.
 
 Build EXE (Windows console):
     pyinstaller --onefile --console --icon rekordbox_harmonic_playlist_icon.ico harmoniq.py
@@ -106,18 +102,14 @@ def to_camelot_if_musical_key(key: str) -> Optional[str]:
     if parse_camelot(s):
         return s.upper()
 
-    # normalize forms like 'a-minor', 'amin', 'a minor', 'a maj'
     s = s.replace("minor", "m").replace("min", "m")
     s = s.replace("major", "").replace("maj", "")
-    # remove 'key' word if present (e.g., 'a-minor-key')
     s = s.replace("key", "")
     s = s.replace("-", "")
 
-    # if endswith 'm' => minor
-    if s.endswith("m"):
+    if s.endswith("m"):  # minor
         return _MINOR_TO_A.get(s)
-    # plain note => assume major
-    return _MAJOR_TO_B.get(s)
+    return _MAJOR_TO_B.get(s)  # major default
 
 def camelot_compatible(k1: str, k2: str) -> bool:
     p1, p2 = parse_camelot(k1), parse_camelot(k2)
@@ -125,25 +117,13 @@ def camelot_compatible(k1: str, k2: str) -> bool:
         return False
     n1, m1 = p1
     n2, m2 = p2
-    # same key
-    if n1 == n2 and m1 == m2:
+    if n1 == n2 and m1 == m2:                      # same key
         return True
-    # ±1 step same mode
-    if m1 == m2 and ((n1 - n2) % 12 in (1, 11)):
+    if m1 == m2 and ((n1 - n2) % 12 in (1, 11)):   # ±1 step same mode
         return True
-    # mode swap same number
-    if n1 == n2 and m1 != m2:
+    if n1 == n2 and m1 != m2:                      # mode swap
         return True
     return False
-
-def camelot_distance_steps(k1: str, k2: str) -> int:
-    p1, p2 = parse_camelot(k1), parse_camelot(k2)
-    if not p1 or not p2:
-        return 12
-    n1, _ = p1
-    n2, _ = p2
-    d = abs(n1 - n2) % 12
-    return min(d, 12 - d)
 
 # ----------------------------- Paths -----------------------------
 
@@ -254,10 +234,8 @@ def load_rekordbox_tracks(xml_path: str):
         key_raw = trk.attrib.get("Tonality", "")
 
         # convert musical keys to Camelot if needed
-        key_camelot = None
-        if key_raw:
-            key_camelot = to_camelot_if_musical_key(key_raw)
-        key = key_camelot or key_raw  # keep original if already Camelot or unknown
+        key_camelot = to_camelot_if_musical_key(key_raw) if key_raw else None
+        key = key_camelot or key_raw
 
         bpm = trk.attrib.get("AverageBpm", "")
         playcount = int(trk.attrib.get("PlayCount") or 0)
@@ -361,6 +339,7 @@ def filter_by_recent_days(tracks, days: Optional[int]):
 # ----------------------------- Config management -----------------------------
 
 def load_config(path: Optional[str] = None):
+    """Return (cfg_dict, cfg_path). Only 'xml' is stored in config."""
     cfg_path = Path(path) if path else get_default_config_path()
     if cfg_path.exists():
         with open(cfg_path, "r", encoding="utf-8") as f:
@@ -368,6 +347,7 @@ def load_config(path: Optional[str] = None):
     return None, cfg_path
 
 def save_config(cfg, path: Path):
+    # cfg is expected to be {"xml": "..."}
     with open(path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
     print(f"Saved configuration to: {path}")
@@ -382,7 +362,7 @@ def pick_harmonic_playlist(pool, count, rng, start_bpm=None,
             return True
         return abs(a["bpm_val"] - b["bpm_val"]) <= tol
 
-    # Accept both direct Camelot and converted musical-key → Camelot
+    # candidates need a Camelot key
     candidates = []
     for t in pool:
         k = t.get("key")
@@ -419,14 +399,17 @@ def pick_harmonic_playlist(pool, count, rng, start_bpm=None,
 
     return chain
 
-# ----------------------------- Wizard & runner -----------------------------
+# ----------------------------- Interactive prompts (run-time params) -----------------------------
 
-def run_config_wizard(cfg_path: Path) -> dict:
-    print(f"\n=== {APP_NAME} Configuration Wizard ===")
-    xml = sanitize_path(input("Path to Rekordbox XML: ").strip())
+def prompt_run_params() -> dict:
+    """Ask user for per-run parameters (everything except XML path)."""
+    print("\n=== Harmoniq Run Settings ===")
     genres = input("Genres (comma-separated; blank for all): ").strip()
     played = input("Played filter (played/unplayed/any) [any]: ").strip() or "any"
-    count = int(input("How many tracks [30]: ").strip() or 30)
+    try:
+        count = int(input("How many tracks [30]: ").strip() or 30)
+    except ValueError:
+        count = 30
     start_bpm_s = input("Preferred start BPM (blank skip): ").strip()
     start_bpm = float(start_bpm_s) if start_bpm_s else None
     bpm_min_s = input("Min BPM (blank skip): ").strip()
@@ -437,8 +420,7 @@ def run_config_wizard(cfg_path: Path) -> dict:
     added_days = int(added_days_s) if added_days_s else None
     out_file = sanitize_path(input("Output .m3u8 path [Harmoniq_Playlist.m3u8]: ").strip() or "Harmoniq_Playlist.m3u8")
 
-    cfg = {
-        "xml": xml,
+    return {
         "genres": genres,
         "played": played,
         "count": count,
@@ -448,8 +430,27 @@ def run_config_wizard(cfg_path: Path) -> dict:
         "added_days": added_days,
         "out": out_file,
     }
-    save_config(cfg, cfg_path)
-    return cfg
+
+def prompt_or_update_xml(cfg: Optional[dict], cfg_path: Path) -> dict:
+    """
+    Ensure config holds a valid 'xml' path. Prompt if missing or invalid; save only 'xml'.
+    Returns cfg dict with 'xml'.
+    """
+    current_xml = sanitize_path((cfg or {}).get("xml", ""))
+    if not current_xml or not os.path.isfile(current_xml):
+        print(f"\n=== {APP_NAME} XML Setup ===")
+        if current_xml and not os.path.isfile(current_xml):
+            print(f"Previous XML not found:\n  {current_xml}")
+        while True:
+            xml = sanitize_path(input("Path to Rekordbox XML: ").strip())
+            if xml and os.path.isfile(xml):
+                cfg = {"xml": xml}
+                save_config(cfg, cfg_path)
+                return cfg
+            print("That path doesn't exist. Please try again.")
+    return {"xml": current_xml}
+
+# ----------------------------- Wizard & runner -----------------------------
 
 def write_m3u8(tracks, out_path):
     out_path = sanitize_path(out_path)
@@ -462,6 +463,19 @@ def write_m3u8(tracks, out_path):
         f.write("\n".join(lines))
     print(f"\nPlaylist written: {out_path}")
 
+def print_tracklist(tracks):
+    print("\n=== Selected Tracks ===")
+    if not tracks:
+        print("(none)")
+        return
+    for i, t in enumerate(tracks, 1):
+        key = t.get("key") or "-"
+        bpm = t.get("bpm_val")
+        bpms = f"{bpm:.1f}" if isinstance(bpm, (int, float)) else "-"
+        path = t.get("path") or "-"
+        print(f"{i:02d}. {t['artist']} - {t['title']} | {key} | {bpms} BPM")
+        print(f"     {path}")
+
 def main():
     args = sys.argv[1:]
     config_override = None
@@ -473,34 +487,32 @@ def main():
             print("Usage: --config <path>")
             sys.exit(1)
 
-    run_wizard = ("/config" in args) or ("--wizard" in args)
+    # Load config (only holds 'xml')
     cfg, cfg_path = load_config(config_override)
-    if not cfg or run_wizard:
-        cfg = run_config_wizard(cfg_path)
+    cfg = prompt_or_update_xml(cfg, cfg_path)  # ensure valid XML stored; save if needed
 
     print(f"Using config: {cfg_path}")
-
-    # Sanitize and validate XML path
     xml_path = sanitize_path(cfg.get("xml", ""))
     if not xml_path or not os.path.isfile(xml_path):
-        print("Error: Rekordbox XML not found.")
-        print(f"  Provided: {cfg.get('xml')}")
+        print("Error: Rekordbox XML not found after setup.")
         print(f"  Sanitized: {xml_path}")
-        print("Tip: re-run `python harmoniq.py /config` and paste the path without quotes.")
         sys.exit(1)
 
+    # Per-run parameters (always prompted)
+    run = prompt_run_params()
+
+    # Load tracks from XML
     tracks = load_rekordbox_tracks(xml_path)
 
-    # Filters
+    # Apply filters
     pool = tracks
-    pool = filter_by_genres(pool, cfg.get("genres", "").split(","))
-    pool = filter_by_played(pool, cfg.get("played"))
-    pool = filter_by_bpm_window(pool, cfg.get("bpm_min"), cfg.get("bpm_max"))
-    pool = filter_by_recent_days(pool, cfg.get("added_days"))
+    pool = filter_by_genres(pool, run.get("genres", "").split(","))
+    pool = filter_by_played(pool, run.get("played"))
+    pool = filter_by_bpm_window(pool, run.get("bpm_min"), run.get("bpm_max"))
+    pool = filter_by_recent_days(pool, run.get("added_days"))
 
     if not pool:
         print("No tracks match your filters.")
-        # Diagnostics
         with_keys = sum(1 for t in tracks if t.get("key"))
         print(f"Library tracks loaded: {len(tracks)} | with 'key': {with_keys}")
         return
@@ -508,9 +520,9 @@ def main():
     rng = random.Random()
     playlist = pick_harmonic_playlist(
         pool,
-        int(cfg.get("count", 30)),
+        int(run.get("count", 30)),
         rng,
-        start_bpm=cfg.get("start_bpm"),
+        start_bpm=run.get("start_bpm"),
         bpm_tolerance=3,
         bpm_tolerance_jump=4,
     )
@@ -521,10 +533,12 @@ def main():
         sample = pool[:10]
         print("Sample of filtered tracks (Artist - Title | Key | BPM):")
         for t in sample:
-            print(f"  {t['artist']} - {t['title']} | {t.get('key')} | {t.get('bpm_val')}")
+            bpm = t.get("bpm_val")
+            print(f"  {t['artist']} - {t['title']} | {t.get('key')} | {bpm if bpm is not None else '-'}")
         return
 
-    write_m3u8(playlist, cfg.get("out", "Harmoniq_Playlist.m3u8"))
+    write_m3u8(playlist, run.get("out", "Harmoniq_Playlist.m3u8"))
+    print_tracklist(playlist)
 
 if __name__ == "__main__":
     main()
