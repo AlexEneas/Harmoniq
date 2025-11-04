@@ -2,24 +2,22 @@
 """
 Harmoniq — Rekordbox Harmonic Playlist Generator
 ------------------------------------------------
-Creates harmonic, BPM-aware playlists from your Rekordbox collection.
+Creates harmonic, BPM-aware playlists from your Rekordbox XML collection.
 
 Features:
 - Camelot-key mixing (Mixed In Key rules)
-- BPM-aware transitions + controlled key jumps
+- BPM-aware transitions + controlled fallback when no strict match exists
 - Genre filters (partial match), played/unplayed filter
-- Start BPM / BPM window; start/end track anchors (kept from earlier versions)
-- Optional source .m3u8 filtering (kept hook; add in config if you use it)
+- Start BPM / BPM window
+- Recently-added filter (last N days)
 - Persistent JSON config saved next to the program (no AppData)
 - /config wizard for easy setup
 - --config <path> for custom JSON config
-- NEW: "Recently added" filter (e.g., last 30 days)
 
 Build EXE (Windows console):
     pyinstaller --onefile --console --icon rekordbox_harmonic_playlist_icon.ico harmoniq.py
 """
 
-import collections
 import json
 import os
 import random
@@ -28,11 +26,23 @@ import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import unquote
 from typing import Optional
+from urllib.parse import unquote
 
 APP_NAME = "Harmoniq"
 _DEFAULT_CONFIG_NAME = "harmoniq.config.json"
+
+# ----------------------------- Utility: path sanitizing -----------------------------
+
+def sanitize_path(p: Optional[str]) -> str:
+    """Trim whitespace and surrounding quotes; expand ~ and env vars."""
+    if p is None:
+        return ""
+    s = str(p).strip()
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1].strip()
+    s = os.path.expanduser(os.path.expandvars(s))
+    return s
 
 # ----------------------------- Camelot helpers -----------------------------
 
@@ -46,17 +56,83 @@ def parse_camelot(s: str):
         return None
     return int(m.group(1)), m.group(2).upper()
 
+# Musical key → Camelot mapping
+_MINOR_TO_A = {
+    "abm": "1A", "g#m": "1A",
+    "ebm": "2A", "d#m": "2A",
+    "bbm": "3A", "a#m": "3A",
+    "fm":  "4A",
+    "cm":  "5A",
+    "gm":  "6A",
+    "dm":  "7A",
+    "am":  "8A",
+    "em":  "9A",
+    "bm":  "10A",
+    "f#m": "11A", "gbm": "11A",
+    "c#m": "12A", "dbm": "12A",
+}
+_MAJOR_TO_B = {
+    "b":  "1B",
+    "gb": "2B", "f#": "2B",
+    "db": "3B", "c#": "3B",
+    "ab": "4B", "g#": "4B",
+    "eb": "5B", "d#": "5B",
+    "bb": "6B", "a#": "6B",
+    "f":  "7B",
+    "c":  "8B",
+    "g":  "9B",
+    "d":  "10B",
+    "a":  "11B",
+    "e":  "12B",
+}
+
+def _normalize_note(s: str) -> str:
+    """Lowercase, standardize unicode sharps/flats, collapse spaces."""
+    s = (s or "").strip().lower()
+    s = s.replace("♭", "b").replace("♯", "#")
+    s = re.sub(r"\s+", "", s)
+    return s
+
+def to_camelot_if_musical_key(key: str) -> Optional[str]:
+    """
+    Convert musical keys like 'G#m', 'A minor', 'C# MAJ', 'Gb', 'Bb Major' to Camelot.
+    Returns Camelot string (e.g., '1A', '8B') or None if not understood.
+    """
+    if not key:
+        return None
+    s = _normalize_note(key)
+
+    # already Camelot?
+    if parse_camelot(s):
+        return s.upper()
+
+    # normalize forms like 'a-minor', 'amin', 'a minor', 'a maj'
+    s = s.replace("minor", "m").replace("min", "m")
+    s = s.replace("major", "").replace("maj", "")
+    # remove 'key' word if present (e.g., 'a-minor-key')
+    s = s.replace("key", "")
+    s = s.replace("-", "")
+
+    # if endswith 'm' => minor
+    if s.endswith("m"):
+        return _MINOR_TO_A.get(s)
+    # plain note => assume major
+    return _MAJOR_TO_B.get(s)
+
 def camelot_compatible(k1: str, k2: str) -> bool:
     p1, p2 = parse_camelot(k1), parse_camelot(k2)
     if not p1 or not p2:
         return False
     n1, m1 = p1
     n2, m2 = p2
-    if n1 == n2 and m1 == m2:                      # same key
+    # same key
+    if n1 == n2 and m1 == m2:
         return True
-    if m1 == m2 and ((n1 - n2) % 12 in (1, 11)):   # ±1 step same mode
+    # ±1 step same mode
+    if m1 == m2 and ((n1 - n2) % 12 in (1, 11)):
         return True
-    if n1 == n2 and m1 != m2:                      # mode swap
+    # mode swap same number
+    if n1 == n2 and m1 != m2:
         return True
     return False
 
@@ -69,9 +145,10 @@ def camelot_distance_steps(k1: str, k2: str) -> int:
     d = abs(n1 - n2) % 12
     return min(d, 12 - d)
 
-# ----------------------------- Paths & config -----------------------------
+# ----------------------------- Paths -----------------------------
 
 def normalize_match_path(p: str) -> str:
+    """Normalize file:// URLs or paths to lowercase forward-slash for matching."""
     if not p:
         return ""
     s = p.strip()
@@ -138,9 +215,8 @@ def _parse_date(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
     s = s.strip()
-    # Try ISO first
     try:
-        return datetime.fromisoformat(s.replace("Z","").replace("T"," "))
+        return datetime.fromisoformat(s.replace("Z", "").replace("T", " "))
     except Exception:
         pass
     for fmt in _DATE_FORMATS:
@@ -163,27 +239,42 @@ def load_m3u8_paths(m3u8_path: str):
 def load_rekordbox_tracks(xml_path: str):
     tree = ET.parse(xml_path)
     root = tree.getroot()
-    collection = root.find("COLLECTION") or root.find(".//COLLECTION")
+
+    collection = root.find("COLLECTION")
     if collection is None:
-        raise RuntimeError("No COLLECTION found in Rekordbox XML.")
+        collection = root.find(".//COLLECTION")
+    if collection is None:
+        raise RuntimeError("No <COLLECTION> element found in Rekordbox XML.")
+
     tracks = []
     for trk in collection.findall("TRACK"):
         name = trk.attrib.get("Name", "")
         artist = trk.attrib.get("Artist", "")
         genre = trk.attrib.get("Genre", "")
-        key = trk.attrib.get("Tonality", "")
+        key_raw = trk.attrib.get("Tonality", "")
+
+        # convert musical keys to Camelot if needed
+        key_camelot = None
+        if key_raw:
+            key_camelot = to_camelot_if_musical_key(key_raw)
+        key = key_camelot or key_raw  # keep original if already Camelot or unknown
+
         bpm = trk.attrib.get("AverageBpm", "")
         playcount = int(trk.attrib.get("PlayCount") or 0)
 
         # Date added (varies by export/version)
-        date_added = trk.attrib.get("DateAdded") or trk.attrib.get("DATEADDED") or trk.attrib.get("Date_Added")
+        date_added = (
+            trk.attrib.get("DateAdded")
+            or trk.attrib.get("DATEADDED")
+            or trk.attrib.get("Date_Added")
+        )
         if not date_added:
             node = trk.find("DATE_ADDED") or trk.find("DateAdded")
             if node is not None:
                 date_added = (node.text or "").strip()
         date_added_dt = _parse_date(date_added)
 
-        # Path
+        # Path (prefer TRACK@Location if present)
         path = None
         loc_attr = trk.attrib.get("Location")
         if loc_attr:
@@ -261,17 +352,11 @@ def filter_by_bpm_window(tracks, bpm_min, bpm_max):
     return out
 
 def filter_by_recent_days(tracks, days: Optional[int]):
-    """Keep tracks whose DateAdded is within the last `days` (UTC-naive)."""
+    """Keep tracks whose DateAdded is within the last `days`."""
     if not days or days <= 0:
         return tracks
-    now = datetime.now()
-    cutoff = now - timedelta(days=int(days))
-    out = []
-    for t in tracks:
-        d = t.get("date_added")
-        if d and d >= cutoff:
-            out.append(t)
-    return out
+    cutoff = datetime.now() - timedelta(days=int(days))
+    return [t for t in tracks if t.get("date_added") and t["date_added"] >= cutoff]
 
 # ----------------------------- Config management -----------------------------
 
@@ -287,16 +372,28 @@ def save_config(cfg, path: Path):
         json.dump(cfg, f, indent=2)
     print(f"Saved configuration to: {path}")
 
-# ----------------------------- Harmonic playlist builder (simple, BPM-aware) -----------------------------
+# ----------------------------- Harmonic playlist builder -----------------------------
 
-def pick_harmonic_playlist(pool, count, rng, start_bpm=None, bpm_tolerance=3, bpm_tolerance_jump=4):
-    """BPM-aware harmonic builder (same key/±1/mode swap first; falls back to BPM-near)."""
+def pick_harmonic_playlist(pool, count, rng, start_bpm=None,
+                           bpm_tolerance=3, bpm_tolerance_jump=4):
+    """BPM-aware harmonic builder (same key / ±1 / mode-swap first; fallback to BPM-near)."""
     def good_bpm(a, b, tol):
         if a.get("bpm_val") is None or b.get("bpm_val") is None:
             return True
         return abs(a["bpm_val"] - b["bpm_val"]) <= tol
 
-    candidates = [t for t in pool if parse_camelot(t["key"])]
+    # Accept both direct Camelot and converted musical-key → Camelot
+    candidates = []
+    for t in pool:
+        k = t.get("key")
+        if parse_camelot(k):
+            candidates.append(t)
+        else:
+            conv = to_camelot_if_musical_key(k)
+            if conv:
+                t["key"] = conv
+                candidates.append(t)
+
     if not candidates:
         return []
 
@@ -304,12 +401,14 @@ def pick_harmonic_playlist(pool, count, rng, start_bpm=None, bpm_tolerance=3, bp
         first = min(candidates, key=lambda t: abs((t.get("bpm_val") or start_bpm) - start_bpm))
     else:
         first = rng.choice(candidates)
+
     chain = [first]
     remaining = [t for t in candidates if t is not first]
 
     while len(chain) < count and remaining:
         last = chain[-1]
-        compat = [t for t in remaining if camelot_compatible(last["key"], t["key"]) and good_bpm(last, t, bpm_tolerance)]
+        compat = [t for t in remaining
+                  if camelot_compatible(last["key"], t["key"]) and good_bpm(last, t, bpm_tolerance)]
         if not compat:
             compat = [t for t in remaining if good_bpm(last, t, bpm_tolerance_jump)]
         if not compat:
@@ -324,7 +423,7 @@ def pick_harmonic_playlist(pool, count, rng, start_bpm=None, bpm_tolerance=3, bp
 
 def run_config_wizard(cfg_path: Path) -> dict:
     print(f"\n=== {APP_NAME} Configuration Wizard ===")
-    xml = input("Path to Rekordbox XML: ").strip()
+    xml = sanitize_path(input("Path to Rekordbox XML: ").strip())
     genres = input("Genres (comma-separated; blank for all): ").strip()
     played = input("Played filter (played/unplayed/any) [any]: ").strip() or "any"
     count = int(input("How many tracks [30]: ").strip() or 30)
@@ -336,7 +435,7 @@ def run_config_wizard(cfg_path: Path) -> dict:
     bpm_max = float(bpm_max_s) if bpm_max_s else None
     added_days_s = input("Only use tracks added in the last N days (blank = no limit): ").strip()
     added_days = int(added_days_s) if added_days_s else None
-    out_file = input("Output .m3u8 path [Harmoniq_Playlist.m3u8]: ").strip() or "Harmoniq_Playlist.m3u8"
+    out_file = sanitize_path(input("Output .m3u8 path [Harmoniq_Playlist.m3u8]: ").strip() or "Harmoniq_Playlist.m3u8")
 
     cfg = {
         "xml": xml,
@@ -346,13 +445,14 @@ def run_config_wizard(cfg_path: Path) -> dict:
         "start_bpm": start_bpm,
         "bpm_min": bpm_min,
         "bpm_max": bpm_max,
-        "added_days": added_days,      # NEW
+        "added_days": added_days,
         "out": out_file,
     }
     save_config(cfg, cfg_path)
     return cfg
 
 def write_m3u8(tracks, out_path):
+    out_path = sanitize_path(out_path)
     lines = ["#EXTM3U"]
     for t in tracks:
         disp = f"{t['artist']} - {t['title']}"
@@ -379,17 +479,30 @@ def main():
         cfg = run_config_wizard(cfg_path)
 
     print(f"Using config: {cfg_path}")
-    tracks = load_rekordbox_tracks(cfg["xml"])
+
+    # Sanitize and validate XML path
+    xml_path = sanitize_path(cfg.get("xml", ""))
+    if not xml_path or not os.path.isfile(xml_path):
+        print("Error: Rekordbox XML not found.")
+        print(f"  Provided: {cfg.get('xml')}")
+        print(f"  Sanitized: {xml_path}")
+        print("Tip: re-run `python harmoniq.py /config` and paste the path without quotes.")
+        sys.exit(1)
+
+    tracks = load_rekordbox_tracks(xml_path)
 
     # Filters
     pool = tracks
-    pool = filter_by_genres(pool, cfg.get("genres","").split(","))
+    pool = filter_by_genres(pool, cfg.get("genres", "").split(","))
     pool = filter_by_played(pool, cfg.get("played"))
     pool = filter_by_bpm_window(pool, cfg.get("bpm_min"), cfg.get("bpm_max"))
-    pool = filter_by_recent_days(pool, cfg.get("added_days"))  # NEW
+    pool = filter_by_recent_days(pool, cfg.get("added_days"))
 
     if not pool:
         print("No tracks match your filters.")
+        # Diagnostics
+        with_keys = sum(1 for t in tracks if t.get("key"))
+        print(f"Library tracks loaded: {len(tracks)} | with 'key': {with_keys}")
         return
 
     rng = random.Random()
@@ -401,7 +514,17 @@ def main():
         bpm_tolerance=3,
         bpm_tolerance_jump=4,
     )
-    write_m3u8(playlist, cfg["out"])
+
+    if not playlist:
+        print("Could not assemble a harmonic playlist from the filtered pool.")
+        # Diagnostics: show a few sample keys/BPMs to help debugging
+        sample = pool[:10]
+        print("Sample of filtered tracks (Artist - Title | Key | BPM):")
+        for t in sample:
+            print(f"  {t['artist']} - {t['title']} | {t.get('key')} | {t.get('bpm_val')}")
+        return
+
+    write_m3u8(playlist, cfg.get("out", "Harmoniq_Playlist.m3u8"))
 
 if __name__ == "__main__":
     main()
