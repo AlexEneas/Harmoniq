@@ -1,6 +1,6 @@
 # 🎧 Harmoniq
 
-Create harmonically-compatible, BPM-aware playlists directly from your **Rekordbox XML export**.  
+Create harmonically-compatible, BPM-aware playlists directly from your **Rekordbox Collection**.  
 Harmoniq helps DJs, radio hosts, and producers generate **mix-ready playlists** that flow naturally — both musically and rhythmically.
 
 > ⚠️ Rekordbox XML export is required (not the database).  
