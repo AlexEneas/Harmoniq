@@ -1,214 +1,289 @@
-# 🎧 Harmoniq  
-### Intelligent Harmonic Playlist Generator for Rekordbox DJs
+# 🎧 Harmoniq
 
-**Harmoniq** automatically builds harmonic, BPM-aware playlists from your Rekordbox Collection.  
-It uses Camelot key mixing and BPM awareness to ensure every transition sounds musically perfect — ideal for DJs, radio hosts, and podcasters.
+Create harmonically-compatible, BPM-aware playlists directly from your **Rekordbox XML export**.  
+Harmoniq helps DJs, radio hosts, and producers generate **mix-ready playlists** that flow naturally — both musically and rhythmically.
+
+> ⚠️ Rekordbox XML export is required (not the database).  
+> Go to **File → Export Collection in XML Format** in Rekordbox before using Harmoniq.
 
 ---
 
-## 🪩 Key Features
+## Table of contents
+- [What it does](#what-it-does)
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Prerequisites (Windows, macOS, Linux)](#prerequisites-windows-macos-linux)
+- [Setup](#setup)
+- [Usage](#usage)
+- [Options](#options)
+- [Example config](#example-config)
+- [Playlist output format](#playlist-output-format)
+- [Building a standalone EXE](#building-a-standalone-exe)
+- [Troubleshooting](#troubleshooting)
+- [FAQs](#faqs)
+- [License](#license)
 
-### 🎶 Harmonic Mixing (Camelot Rules)
-- Follows **Mixed In Key / Camelot Wheel** logic:
-  - Same key (e.g., 8A → 8A)
-  - ±1 step within same mode (e.g., 8A → 7A or 9A)
-  - Mode swap of same number (e.g., 8A ↔ 8B)
-- Avoids jarring key jumps for a smooth, club-ready flow.
+---
 
-### 🎚️ BPM-Aware Transitions
-- Keeps mixes tempo-consistent.
-- Prevents large jumps between tracks.
-- Optionally start near a target BPM (e.g., 136).
+## What it does
 
-### 🧠 Intelligent Selection
-- Chooses harmonically and rhythmically compatible tracks.
-- Automatically adjusts selection if constraints are tight.
+Harmoniq reads your Rekordbox XML file and intelligently selects tracks to form a **harmonic and BPM-compatible** playlist.
 
-### 🎛️ Customizable Filters
+It can:
+- Filter by **genre**, **BPM range**, or **play count**.
+- Include only **recently added** tracks (e.g., last 30 days).
+- Start from a **specific BPM** or **track** and flow harmonically through your library.
+- Output a **.m3u8 playlist** you can load straight into Rekordbox or media players.
+
+---
+
+## Features
+
+### 🎶 Harmonic mixing (Camelot rules)
+- Uses **Mixed In Key / Camelot Wheel** logic:
+  - Same key (e.g. 8A → 8A)
+  - Adjacent key within same mode (e.g. 8A → 7A / 9A)
+  - Mode switch at same number (e.g. 8A ↔ 8B)
+- Avoids harsh key clashes automatically.
+
+### 🎚️ BPM-aware transitions
+- Keeps tempo flow smooth between tracks.
+- Optional BPM tolerance control.
+- You can define a **starting BPM** or a **BPM range** (e.g. 130–138).
+
+### 🧠 Intelligent selection
+- Selects harmonically and rhythmically compatible tracks.
+- Supports limited “intelligent jumps” when key compatibility runs out.
+- Optionally bridges key jumps with intermediary tracks for smooth transitions.
+
+### 🎛️ Full filtering options
 | Filter | Description |
 |---------|-------------|
-| **Genre** | Partial match — “Trance” matches “Uplifting Trance”, “Vocal Trance”, etc. |
-| **Played / Unplayed** | Filter by Rekordbox play count. |
-| **BPM Range** | Define minimum and maximum BPMs. |
-| **Start BPM** | Pick an initial BPM to anchor the playlist around. |
-| **Recently Added** | ⚡ **NEW:** limit selection to tracks added in the last *N* days (e.g., 30). Perfect for podcast or radio mixes. |
-| **Start/End Track (optional)** | Choose a specific starting or ending track (feature retained from earlier builds). |
+| **Genre** | Partial matching (e.g., “Trance” matches “Uplifting Trance”). |
+| **Played / Unplayed** | Based on Rekordbox play count. |
+| **BPM Range** | Min / max BPM boundaries. |
+| **Start BPM** | Start the playlist around a target BPM. |
+| **Recently Added** | Select tracks added in the last *N* days — perfect for radio/podcast prep. |
+| **Start/End Track** | Optionally define fixed start and end tracks. |
 
-### 💾 Configuration System
-- First run starts a simple **interactive wizard** (`/config`).
-- Settings are saved to a single JSON file next to the program:
-  ```
-  harmoniq.config.json
-  ```
-  > 💡 No AppData paths — everything stays in the program folder.
-- Reuse settings instantly on future runs.
-- Create multiple JSON configs for different mix styles.
+### 💾 Persistent config system
+- Stores all settings in a single JSON config file:
+harmoniq.config.json
 
-### ⚙️ Config Management
-| Option | Description |
-|---------|-------------|
-| `/config` or `--wizard` | Launch the setup wizard. |
-| `--config <path>` | Use a custom JSON config file. |
-| *(no args)* | Auto-loads saved config (or runs wizard if none found). |
+markdown
+Copy code
+- Saved **next to the program** — not in hidden system folders.
+- Reusable between sessions and editable manually.
+- Supports multiple config files with `--config my_config.json`.
 
----
+### 🧩 Command-line friendly
+Simple syntax for power users:
+```powershell
+python harmoniq.py --config trance_show.json
+Harmoniq.exe /config
+How it works
+Harmoniq parses your Rekordbox XML export.
 
-## 📂 Example Config File
-```json
+It builds a list of all valid tracks (with BPM, key, genre, etc.).
+
+Filters are applied:
+
+genre
+
+play count
+
+BPM range
+
+date added
+
+The program then:
+
+chooses a seed track near your start BPM (or random if none),
+
+finds harmonic matches by Camelot compatibility,
+
+builds a full playlist of compatible tracks.
+
+A .m3u8 playlist is written — using forward slashes (D:/Music/...) so Rekordbox recognizes file paths correctly.
+
+Prerequisites (Windows, macOS, Linux)
+Install Python 3.9 or higher
+Download from python.org
+
+🟢 On Windows, tick “Add Python to PATH” during installation.
+
+Check your installation
+
+powershell
+Copy code
+python --version
+(Optional) Install PyInstaller if you want to build a standalone .exe.
+
+Setup
+Export your Rekordbox library:
+
+In Rekordbox:
+File → Export Collection in XML Format
+
+Save the file somewhere accessible (e.g. D:\Rekordbox Collection.xml).
+
+Place harmoniq.py in a folder of your choice (e.g. C:\Harmoniq).
+
+Run Harmoniq once to start the configuration wizard:
+
+powershell
+Copy code
+python harmoniq.py
+The wizard will ask for:
+
+Rekordbox XML path
+
+Genres to include
+
+Played/unplayed filter
+
+BPM range
+
+“Tracks added in last N days”
+
+Number of tracks
+
+Output playlist path
+
+A JSON config file (e.g. harmoniq.config.json) will be created automatically.
+
+Usage
+Basic usage
+powershell
+Copy code
+python harmoniq.py
+Uses the existing config file (or launches the wizard if none exists).
+
+Reconfigure
+powershell
+Copy code
+python harmoniq.py /config
+or
+
+powershell
+Copy code
+python harmoniq.py --wizard
+Custom configuration file
+powershell
+Copy code
+python harmoniq.py --config my_trance_show.json
+Options
+Option	Description
+/config, --wizard	Run setup wizard to create/update config
+--config <path>	Use custom JSON config file
+(no args)	Run with saved config (auto mode)
+
+All advanced settings — like jump tolerance, BPM tolerance, etc. — are stored inside the JSON file.
+
+Example config
+json
+Copy code
 {
   "xml": "D:/Rekordbox Collection.xml",
-  "genres": "Trance, Classic Trance",
-  "played": "any",
-  "count": 30,
+  "genres": "Trance, Progressive Trance",
+  "played": "unplayed",
+  "count": 25,
   "start_bpm": 136,
   "bpm_min": 130,
-  "bpm_max": 140,
+  "bpm_max": 138,
   "added_days": 30,
   "out": "D:/Playlists/Harmoniq_Recent_Trance.m3u8"
 }
-```
+Playlist output format
+Example .m3u8 playlist generated by Harmoniq:
 
-This will:
-- Look at your Rekordbox XML.
-- Filter for Trance/Classic Trance.
-- Include both played and unplayed tracks.
-- Select 30 tracks around 136 BPM.
-- Only include tracks **added in the last 30 days**.
-- Output a harmonically-ordered `.m3u8` file.
-
----
-
-## 🧭 How to Use
-
-### 1️⃣ Export your Rekordbox Library
-In Rekordbox:
-> **File → Export Collection in XML Format**  
-Save it somewhere (e.g. `D:\Rekordbox Collection.xml`).
-
-### 2️⃣ Run Harmoniq for the First Time
-```bash
-python harmoniq.py
-```
-If no config exists, the setup wizard starts automatically.
-
-You’ll be asked for:
-- Rekordbox XML path  
-- Genres  
-- Played filter  
-- BPM range  
-- Days to look back for new tracks  
-- Output file name  
-- Number of tracks  
-
-### 3️⃣ Create or Re-run Configurations
-```bash
-python harmoniq.py /config
-```
-or  
-```bash
-python harmoniq.py --wizard
-```
-
-To load a custom config:
-```bash
-python harmoniq.py --config my_show_config.json
-```
-
-### 4️⃣ Output
-Your playlist will appear as a `.m3u8` file:
-```
+m3u
+Copy code
 #EXTM3U
-#EXTINF:-1,Artist - Title
-D:/Music/Trance/Example Track.mp3
-```
+#EXTINF:-1,Above & Beyond - Sun In Your Eyes
+D:/Trance/Above & Beyond - Sun In Your Eyes.flac
+#EXTINF:-1,Andy Moor - Halcyon (Extended Mix)
+D:/Trance/Andy Moor - Halcyon (Extended Mix).mp3
+✅ Uses forward slashes (/) so Rekordbox recognizes paths correctly.
+✅ Safe to re-import — Harmoniq never overwrites your XML file.
 
-This format imports cleanly back into Rekordbox with no duplicate entries.
+Building a standalone EXE
+To make a portable Windows program:
 
----
-
-## 💡 Ideal Use Cases
-- 🎧 **Podcast or radio show prep:**  
-  Generate a fresh “last 30 days” playlist of new tracks that harmonically flow.
-- 💿 **Vinyl/Classic Trance sets:**  
-  Build perfect Camelot-key progressions around your preferred BPM.
-- 🎚️ **Automated show planning:**  
-  Quickly test harmonic sets before recording or streaming.
-
----
-
-## ⚙️ Requirements
-
-- **Python 3.9+**
-- Works on Windows, macOS, or Linux
-- No external dependencies (only built-in Python libraries)
-
----
-
-## 🧱 Building a Standalone EXE
-
-To make a Windows version you can run directly:
-
-```bash
+powershell
+Copy code
 pip install pyinstaller
 pyinstaller --onefile --console --icon rekordbox_harmonic_playlist_icon.ico harmoniq.py
-```
+After building, you’ll find:
 
-Your compiled app will appear in the `dist` folder as:
-```
+Copy code
+dist/Harmoniq.exe
+Run the EXE
+powershell
+Copy code
 Harmoniq.exe
-```
+or
 
-Run normally:
-```bash
-Harmoniq.exe
-```
-
-Or reconfigure anytime:
-```bash
+powershell
+Copy code
 Harmoniq.exe /config
-```
+Troubleshooting
+Problem	Solution
+Rekordbox says the playlist has missing files	Check your XML’s Location fields use real paths (e.g. D:/Music/...). Harmoniq uses them directly.
+No tracks found	Double-check your genre filter, play count filter, or “recent days” setting. Try leaving them blank.
+Wrong BPM or key	Ensure Rekordbox has analyzed your tracks for key/BPM before exporting.
+Python not recognized	Re-install Python and ensure “Add to PATH” is ticked.
+Permission denied	If running from Program Files, move Harmoniq to a writable folder like C:\Harmoniq.
+
+FAQs
+Q: Do I need Rekordbox open to use Harmoniq?
+No. Harmoniq only reads the exported XML file.
+
+Q: Will it modify my Rekordbox library?
+No — it only reads your XML and creates a new .m3u8 playlist file.
+
+Q: Can I use multiple configs for different genres?
+Yes. Just duplicate and rename your JSON config files (e.g. harmoniq_trance.json, harmoniq_house.json) and use --config.
+
+Q: How many tracks can it generate?
+Any number — though harmonic accuracy is best between 15–60 tracks.
+
+License
+text
+Copy code
+MIT License
+
+Copyright (c) 2025 Alex Eneas
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the “Software”), to deal
+in the Software without restriction...
+Quick start (TL;DR)
+powershell
+Copy code
+# 1. Install Python
+# 2. Export Rekordbox XML
+# 3. Run wizard
+python harmoniq.py
+
+# 4. Generate playlist
+python harmoniq.py
+
+# 5. (Optional) Build EXE
+pyinstaller --onefile --console --icon rekordbox_harmonic_playlist_icon.ico harmoniq.py
+Author: Alex Eneas
+Project: Harmoniq — Intelligent Harmonic Playlist Generator for Rekordbox DJs
+Website: Nationvibe Worldwide
+
+“Make every playlist flow as if it were mixed live.” 🎶
+
+yaml
+Copy code
 
 ---
 
-## ⚡ Command Summary
+Would you like me to save this README as a `.md` file for download (like I did before)?  
+I can also add a **linked header image** (your Harmoniq banner) at the top with:
 
-| Command / Flag | Description |
-|----------------|-------------|
-| `/config`, `--wizard` | Launch setup wizard |
-| `--config <path>` | Use a custom JSON config file |
-| *(no args)* | Auto-load existing configuration |
-| *(in wizard)* | Set XML path, genres, BPM filters, “recent” days, etc. |
-
----
-
-## 📄 Playlist Output Example
-```m3u
-#EXTM3U
-#EXTINF:-1,Binary Finary - 1998 (Original Mix)
-D:/Trance/Binary Finary - 1998 (Original Mix).mp3
-#EXTINF:-1,Armin van Buuren - Shivers (Extended Mix)
-D:/Trance/Armin van Buuren - Shivers (Extended Mix).mp3
-```
-
----
-
-## 🎨 Branding
-
-**Name:** Harmoniq  
-**Tagline:** *Intelligent Harmonic Playlist Generator for Rekordbox DJs*  
-**Icon:** Blue vinyl record surrounded by the Camelot colour ring  
-**Developer:** Alex Eneas  
-**License:** MIT
-
----
-
-## 💬 Support / Contributions
-
-If you find a bug, want to contribute improvements, or have feature ideas:
-- Submit an **Issue** or **Pull Request** on the GitHub repository.
-- Or suggest features.
-
----
-
-> “Harmoniq makes your Rekordbox library sound like you planned every mix —  
-> even when you didn’t.” 🎶
+```markdown
+![Harmoniq Banner](banner.png)
